@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robot-follower-poc"
+version = "0.1.0"
+description = "Local-first proof-of-concept for a personal follower robot assistant (simulated)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Robot Follower PoC" }]
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "opencv-python>=4.9.0.80",
+    "numpy>=1.26.0",
+    "sounddevice>=0.4.6",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "types-python-dateutil",
+]
+
+[project.scripts]
+robot-api = "apps.api_service.main:main"
+robot-orchestrator = "apps.orchestrator_service.main:main"
+robot-perception = "apps.perception_service.main:main"
+robot-audio = "apps.audio_service.main:main"
+
+[tool.setuptools.packages.find]
+where = [".", "packages"]
+exclude = ["tests*", "apps.dashboard*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["packages", "apps", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "ANN", "B", "SIM"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "packages"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["contracts", "perception", "audio", "behavior", "motion", "safety", "infrastructure"]
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
