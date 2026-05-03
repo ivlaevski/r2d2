@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api_service.routes import audio as audio_routes
 from apps.api_service.routes import commands as commands_routes
+from apps.api_service.routes import dashboard_ws as dashboard_ws_routes
 from apps.api_service.routes import status as status_routes
 from infrastructure.robot_application import RobotApplication
 
@@ -30,4 +31,5 @@ def create_app(robot: RobotApplication) -> FastAPI:
     app.include_router(status_routes.router)
     app.include_router(commands_routes.router)
     app.include_router(audio_routes.router)
+    app.include_router(dashboard_ws_routes.router)
     return app

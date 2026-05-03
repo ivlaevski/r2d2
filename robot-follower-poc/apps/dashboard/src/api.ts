@@ -1,4 +1,4 @@
-import type { AudioCommandRow, RobotStatus } from "./types";
+import type { AudioCommandRow, ConversationStatus, RobotStatus, TranscriptItem } from "./types";
 
 const STORAGE_KEY = "robot-follower.apiBase";
 
@@ -70,6 +70,67 @@ export async function fetchAudioCommands(base: string): Promise<AudioCommandRow[
   }
   const body = (await readJson(res)) as { commands?: AudioCommandRow[] };
   return Array.isArray(body.commands) ? body.commands : [];
+}
+
+export async function fetchAudioStatus(base: string): Promise<ConversationStatus> {
+  const url = `${normalizeBase(base)}/audio/status`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    throw new Error(`GET /audio/status failed: HTTP ${res.status}`);
+  }
+  return (await readJson(res)) as ConversationStatus;
+}
+
+export async function fetchAudioTranscript(base: string, limit?: number): Promise<TranscriptItem[]> {
+  const q = limit != null ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  const url = `${normalizeBase(base)}/audio/transcript${q}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    throw new Error(`GET /audio/transcript failed: HTTP ${res.status}`);
+  }
+  const body = (await readJson(res)) as { items?: TranscriptItem[] };
+  return Array.isArray(body.items) ? body.items : [];
+}
+
+export async function postAudioConversationStart(base: string): Promise<ConversationStatus> {
+  const url = `${normalizeBase(base)}/audio/conversation/start`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson(res);
+  if (!res.ok) {
+    const detail = typeof body === "object" && body !== null ? JSON.stringify(body) : String(body);
+    throw new Error(`POST /audio/conversation/start failed: HTTP ${res.status}: ${detail}`);
+  }
+  return body as ConversationStatus;
+}
+
+export async function postAudioConversationStop(base: string): Promise<ConversationStatus> {
+  const url = `${normalizeBase(base)}/audio/conversation/stop`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson(res);
+  if (!res.ok) {
+    const detail = typeof body === "object" && body !== null ? JSON.stringify(body) : String(body);
+    throw new Error(`POST /audio/conversation/stop failed: HTTP ${res.status}: ${detail}`);
+  }
+  return body as ConversationStatus;
+}
+
+export async function postAudioTranscriptClear(base: string): Promise<void> {
+  const url = `${normalizeBase(base)}/audio/transcript/clear`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const body = await readJson(res);
+    const detail = typeof body === "object" && body !== null ? JSON.stringify(body) : String(body);
+    throw new Error(`POST /audio/transcript/clear failed: HTTP ${res.status}: ${detail}`);
+  }
 }
 
 export async function postCommand(base: string, path: string, json?: unknown): Promise<RobotStatus> {

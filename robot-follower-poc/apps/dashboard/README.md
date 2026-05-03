@@ -2,11 +2,10 @@
 
 React + Vite single-page UI that:
 
-- Polls **`GET /health`** and **`GET /status`** every **5 seconds** (configurable constant in `src/App.tsx`).
-- Loads **`GET /audio/commands`** when the API base changes (supported console / future ASR phrases).
-- Shows **microphone / ingress listening** from **`GET /status`** (`microphone_listening`), driven by **`audio_service`** heartbeats to **`POST /audio/listening`**.
-- Shows **command receipt echo** (`command_receipt_echo`, `command_receipt_at_s`) so each accepted command is repeated for confirmation.
-- Provides buttons for **`/commands/follow`**, **`stay`**, **`stop`**, **`reset`**, and **`/commands/distance`** with a numeric field.
+- Opens a **WebSocket** to **`/ws/dashboard`** for the same payload as **`GET /status`** (~5 Hz): **mode**, **desired distance**, **targets** (with optional **JPEG thumbnails**), **motor command history**, and **frame time** as `hh:mm:ss` from `frame_timestamp_s`.
+- Polls **`GET /health`** on a slower interval for the control API card.
+- Sends **Follow / Stay / Stop / Reset / Set distance** via **HTTP POST** as before.
+- Optionally shows **transcript** lines when you enable **Show transcript** in the UI (polls **`/audio/transcript`** while the audio service is running).
 
 ## Prerequisites
 
@@ -29,7 +28,7 @@ Edit `.env.local` if the API is not at `http://127.0.0.1:8000`.
 npm run dev
 ```
 
-Open the printed URL (usually `http://localhost:5173`). You can override the API base in the UI; it is saved in `localStorage`.
+Open the printed URL (usually `http://localhost:5173`). You can override the API base in the UI; it is saved in `localStorage`. The WebSocket URL is derived from that base (`http` → `ws`, `https` → `wss`).
 
 ## Production build
 
@@ -42,4 +41,5 @@ Serve `dist/` behind the same host as the API, or extend `API_CORS_ORIGINS` / re
 
 ## Notes
 
-- In this PoC, only the **control API** exposes HTTP. Perception and audio are separate processes without a built-in health URL; the dashboard treats **`/status`** as the “robot runtime” probe when the API shares the orchestrator’s `RobotApplication`.
+- **`/ws/dashboard`** is served by the same FastAPI app as **`/status`**; it does not replace HTTP commands.
+- Thumbnails and multi-target rows appear when the **orchestrator** runs the **perception pipeline** and ingests frames into the shared `RobotApplication`. API-only runs still stream status, but targets may be empty until perception is active.

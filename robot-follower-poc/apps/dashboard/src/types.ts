@@ -1,14 +1,49 @@
 /** Mirrors ``RobotStatus`` from the FastAPI ``GET /status`` payload. */
 
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface TargetObservation {
   target_detected: boolean;
-  bbox_x: number;
-  bbox_y: number;
-  bbox_width: number;
-  bbox_height: number;
+  bbox: BoundingBox;
   confidence: number;
   horizontal_offset: number;
   approximate_distance_m: number | null;
+  track_id?: number | null;
+  backend?: string;
+}
+
+export interface TargetLock {
+  locked_track_id: number | null;
+  lost_frames: number;
+  locked: boolean;
+}
+
+export interface PerceptionFrameResult {
+  frame_id: number;
+  timestamp_s: number;
+  frame_width: number;
+  frame_height: number;
+  primary_target: TargetObservation;
+  target_lock?: TargetLock;
+}
+
+export interface DashboardTargetSnapshot {
+  track_id: number | null;
+  approximate_distance_m: number | null;
+  confidence: number;
+  is_followed: boolean;
+  face_thumbnail_jpeg_b64: string | null;
+}
+
+export interface MotorCommandHistoryItem {
+  command: string;
+  intensity: number;
+  applied_at_s: number;
 }
 
 export interface RobotStatus {
@@ -24,11 +59,34 @@ export interface RobotStatus {
   microphone_listening?: boolean;
   command_receipt_echo?: string | null;
   command_receipt_at_s?: number;
+  targets_count?: number;
+  targets?: DashboardTargetSnapshot[];
+  motor_command_history?: MotorCommandHistoryItem[];
 }
 
 export interface AudioCommandRow {
   phrase: string;
   description: string;
+}
+
+export type TranscriptRole = "user" | "agent" | "system";
+
+export interface TranscriptItem {
+  id: string;
+  timestamp_utc: string;
+  role: TranscriptRole;
+  text: string;
+  is_final?: boolean;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConversationStatus {
+  enabled: boolean;
+  active: boolean;
+  agent_id: string | null;
+  last_error: string | null;
+  transcript_count: number;
 }
 
 export interface HealthPayload {

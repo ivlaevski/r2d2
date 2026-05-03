@@ -29,6 +29,12 @@ dev = [
     "mypy>=1.8.0",
     "types-python-dateutil",
 ]
+vision-ultralytics = [
+    "ultralytics>=8.3.0",
+]
+audio-elevenlabs = [
+    "elevenlabs[pyaudio]>=1.50.0",
+]
 
 [project.scripts]
 robot-api = "apps.api_service.main:main"
@@ -43,7 +49,7 @@ exclude = ["tests*", "apps.dashboard*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["packages", "apps", "tests"]
+src = ["packages", "apps", "tests", "integrations"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "ANN", "B", "SIM"]
@@ -58,8 +64,25 @@ pythonpath = [".", "packages"]
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["contracts", "perception", "audio", "behavior", "motion", "safety", "infrastructure"]
+packages = [
+    "contracts",
+    "perception",
+    "audio",
+    "behavior",
+    "motion",
+    "safety",
+    "infrastructure",
+    "integrations",
+]
 strict = false
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "ultralytics.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "elevenlabs.*"
+ignore_missing_imports = true

@@ -17,7 +17,8 @@ See also **`AGENTS.md`** for repository conventions for future work.
 | Area | Role |
 |------|------|
 | `packages/contracts` | Pydantic models shared across services |
-| `packages/perception` | OpenCV camera, HOG person detector, distance estimate, tracker |
+| `packages/perception` | OpenCV camera, pluggable `PersonTracker`, distance estimate, target lock |
+| `integrations/ultralytics_yolo_botsort` | **Optional** YOLO + BoT-SORT / ByteTrack (AGPL — see below) |
 | `packages/behavior` | State machine for modes and commands |
 | `packages/motion` | Motion planner + **simulated** motor controller (logging, timeouts) |
 | `packages/safety` | Supervisor and watchdog helpers |
@@ -27,7 +28,7 @@ See also **`AGENTS.md`** for repository conventions for future work.
 | `apps/orchestrator_service` | Main control loop (camera + tick + optional API thread) |
 | `apps/perception_service` | Standalone camera/detector diagnostics |
 | `apps/audio_service` | Console commands forwarded to the API via HTTP |
-| `apps/dashboard` | React + Vite SPA: service probes + command buttons |
+| `apps/dashboard` | React + Vite SPA: WebSocket live state, targets strip, motor history, HTTP probes |
 
 **Integrated run:** start the orchestrator with `--with-api` so the API and control loop share one `RobotApplication` in a single process (recommended for local demos).
 
@@ -49,6 +50,36 @@ python -m venv .venv
 python -m pip install -U pip
 pip install -e ".[dev]"
 ```
+
+The default stack uses **OpenCV HOG** only and stays aligned with the repo’s **MIT** intent. An **optional** Ultralytics backend is isolated under `integrations/ultralytics_yolo_botsort/` and is **not** installed by default.
+
+### Computer vision backends
+
+| `VISION_BACKEND` | Notes |
+|------------------|--------|
+| `hog` | **Default.** Simple CPU HOG people detector in core `packages/perception`; MIT-friendly. |
+| `ultralytics_yolo_botsort` | **Optional.** YOLO + BoT-SORT / similar tracker YAML; stronger multi-person tracking. Depends on **ultralytics** + default weights (**AGPL-3.0**). |
+| `ultralytics_yolo_bytetrack` | **Optional.** Same integration with **ByteTrack** (`bytetrack.yaml`) as the default tracker unless you override `YOLO_TRACKER`. |
+
+### Optional Ultralytics install
+
+```powershell
+pip install -e ".[dev,vision-ultralytics]"
+```
+
+Example `.env` (after installing the extra):
+
+```env
+VISION_BACKEND=ultralytics_yolo_botsort
+YOLO_MODEL=yolo11n.pt
+YOLO_TRACKER=botsort.yaml
+```
+
+If you select an Ultralytics backend without the extra, the app exits with:
+
+`Ultralytics backend requested but optional dependency is not installed. Run: pip install -e .[vision-ultralytics]`
+
+(On PowerShell, quote the argument: `pip install -e ".[vision-ultralytics]"`.)
 
 Copy environment defaults:
 
@@ -116,9 +147,58 @@ python -m apps.audio_service.main
 
 `audio_service` posts parsed console commands to `ROBOT_API_BASE` (see `.env.example`). Start the API first (standalone or via orchestrator `--with-api`).
 
+## ElevenLabs Agent audio backend (optional)
+
+**Purpose**
+
+- **Conversational voice UX** via the official ElevenLabs Conversational AI SDK (`DefaultAudioInterface`: microphone in, laptop speakers out).
+- **Full transcript** (user, agent, system) exposed only through the **local FastAPI** API for the dashboard — **`ELEVENLABS_API_KEY` never goes to the browser**.
+- **Local command extraction** from user transcripts (same safety model as console: **STOP** and other intents are parsed in Python and sent to the local robot API).
+
+**Install**
+
+```powershell
+pip install -e ".[dev,audio-elevenlabs]"
+```
+
+On Windows, **PyAudio** can be finicky; if `pip install` fails, use a [prebuilt PyAudio wheel](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio) for your Python version, or install PortAudio and build from source. The SDK expects PyAudio for `DefaultAudioInterface`.
+
+**Environment** (root `.env`)
+
+```env
+ELEVENLABS_AUDIO_ENABLED=true
+ELEVENLABS_AGENT_ID=agent_5301kqpx6qheej0a0qvmhkqm0236
+ELEVENLABS_API_KEY=your_api_key_here
+ELEVENLABS_REQUIRES_AUTH=true
+ELEVENLABS_USE_SIGNED_URL=true
+ELEVENLABS_AUTO_START=false
+```
+
+**Run** (recommended integrated demo):
+
+```powershell
+python -m apps.orchestrator_service.main --with-api
+```
+
+**Start conversation** (API or curl; the bundled dashboard does not show voice controls while audio is disabled by default):
+
+```powershell
+curl -s -X POST http://127.0.0.1:8000/audio/conversation/start
+```
+
+**View transcript**:
+
+```powershell
+curl -s "http://127.0.0.1:8000/audio/transcript?limit=50"
+```
+
+**Safety**
+
+**STOP**, **STAY**, **FOLLOW**, **CHANGE_DISTANCE**, and related phrases are **parsed locally** from the user transcript and dispatched to the **local** `RobotApplication` / HTTP API. The ElevenLabs agent does **not** directly control motors; it provides conversation and audio playback only.
+
 ## Web dashboard (SPA)
 
-React + Vite UI under `apps/dashboard`: polls **`/health`** and **`/status`** every **5 seconds**, and sends **Follow / Stay / Stop / Reset / Set distance** to the API.
+React + Vite UI under `apps/dashboard`: opens a **WebSocket** to **`/ws/dashboard`** for the same JSON as **`GET /status`** (~5 Hz): live **mode**, **desired distance**, **target count**, **frame time** (duration from `frame_timestamp_s` as `hh:mm:ss`), a horizontal **targets** strip (upper-body **JPEG thumbnails** when the orchestrator runs the perception pipeline), and **motor command** history. It still polls **`/health`** on a slower interval. Commands use **HTTP POST** as before. Optional **transcript** lines appear only when you tick **Show transcript** in the UI (then it polls **`/audio/transcript`** while the audio service is up).
 
 1. Ensure the API is up (e.g. `python -m apps.orchestrator_service.main --with-api`).
 2. Root `.env` should allow the Vite dev origin (default `API_CORS_ORIGINS` in `.env.example` already includes `http://localhost:5173`).
@@ -148,16 +228,16 @@ curl -s -X POST http://127.0.0.1:8000/commands -H "Content-Type: application/jso
 ## Linting and tests
 
 ```powershell
-ruff check packages apps tests
+ruff check packages apps tests integrations
 pytest -q
-mypy packages
+mypy packages integrations
 ```
 
 ## Future extensions
 
 - **Real motor controller** over serial / USB / CAN behind `packages/motion` (replace `SimulatedMotorController`).
 - **Face recognition** or re-identification for tighter following.
-- **MediaPipe / YOLO** behind `PersonDetector`.
+- **Other detectors** behind `PersonTracker` (keep optional / alternate-license code under `integrations/`).
 - **Cloud AI** command interpretation; keep `SafetySupervisor` and emergency paths **local-only**.
 - **Whisper / Vosk / Windows SR** behind `CommandRecognizerProtocol`.
 - **TTS** via `TextToSpeechProtocol`.
@@ -165,4 +245,6 @@ mypy packages
 
 ## License
 
-MIT (placeholder — adjust to your org’s policy).
+The **core project** is intended to remain **MIT**-licensed unless files state otherwise.
+
+The **optional Ultralytics** path depends on the **`ultralytics`** package and default **Ultralytics YOLO** model weights, which are **AGPL-3.0** unless you use weights and terms covered by another license. **Commercial**, **proprietary**, **client-facing**, or **network-accessible** deployments may require **legal review** and may need an **Ultralytics Enterprise** license or a different permissively licensed vision stack. See `integrations/ultralytics_yolo_botsort/README.md`.

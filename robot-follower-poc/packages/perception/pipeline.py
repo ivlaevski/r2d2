@@ -1,4 +1,4 @@
-"""Compose camera, detector, tracker, and distance into ``PerceptionFrameResult``."""
+"""Compose camera, tracker, target selection, and distance into ``PerceptionFrameResult``."""
 
 from __future__ import annotations
 
@@ -7,50 +7,51 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
-from contracts.perception import PerceptionFrameResult, TargetObservation
+from contracts.perception import PerceptionFrameResult, TrackedPerson
 from infrastructure.config import Settings
-from perception.distance_estimator import DistanceEstimator
-from perception.person_detector import PersonDetector
-from perception.tracker import select_primary_target
+from perception.person_tracker import PersonTracker
+from perception.target_selector import TargetSelector
+from perception.thumbnails import upper_body_thumbnail_jpeg_b64
 
 
 class PerceptionPipeline:
-    """Runs one frame through detector + geometry helpers."""
+    """Runs one frame through tracker + target lock + contracts."""
 
     def __init__(
         self,
         settings: Settings,
-        detector: PersonDetector,
+        person_tracker: PersonTracker,
+        target_selector: TargetSelector | None = None,
     ) -> None:
         self._settings = settings
-        self._detector = detector
-        self._distance = DistanceEstimator(settings)
+        self._tracker = person_tracker
+        self._selector = target_selector or TargetSelector(settings)
         self._frame_id = 0
 
+    def reset_target_lock(self) -> None:
+        """Clear target lock (e.g. after mode changes)."""
+
+        self._selector.reset()
+
     def process_frame(self, frame_bgr: NDArray[np.uint8]) -> PerceptionFrameResult:
-        """Detect person, estimate offset and distance."""
+        """Run tracker and primary-target selection."""
 
         h, w = frame_bgr.shape[:2]
-        dets = self._detector.detect(frame_bgr)
-        primary = select_primary_target(dets)
+        tracks = self._tracker.update(frame_bgr)
+        obs, lock = self._selector.select(tracks, frame_width=int(w), frame_height=int(h))
 
-        if primary is None:
-            obs = TargetObservation(target_detected=False)
-        else:
-            cx = primary.x + primary.width / 2.0
-            norm = (cx - (w / 2.0)) / (w / 2.0)
-            norm = float(max(-1.0, min(1.0, norm)))
-            dist = self._distance.estimate(primary.height)
-            obs = TargetObservation(
-                target_detected=True,
-                bbox_x=primary.x,
-                bbox_y=primary.y,
-                bbox_width=primary.width,
-                bbox_height=primary.height,
-                confidence=primary.confidence,
-                horizontal_offset=norm,
-                approximate_distance_m=dist,
-            )
+        sorted_tracks = sorted(tracks, key=lambda p: p.bbox.x + p.bbox.width * 0.5)
+        tracked_with_thumbs: list[TrackedPerson] = []
+        max_thumb = int(self._settings.dashboard_max_thumbnail_tracks)
+        for i, person in enumerate(sorted_tracks):
+            b64: str | None = None
+            if (
+                max_thumb > 0
+                and i < max_thumb
+                and self._settings.dashboard_target_thumbnails_enabled
+            ):
+                b64 = upper_body_thumbnail_jpeg_b64(frame_bgr, person.bbox)
+            tracked_with_thumbs.append(person.model_copy(update={"face_thumbnail_jpeg_b64": b64}))
 
         self._frame_id += 1
         return PerceptionFrameResult(
@@ -59,4 +60,6 @@ class PerceptionPipeline:
             frame_width=int(w),
             frame_height=int(h),
             primary_target=obs,
+            target_lock=lock,
+            tracked_people=tracked_with_thumbs,
         )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 
+from contracts.motor_history import MotorCommandHistoryItem
 from contracts.telemetry import MotionCommand, MotionCommandType
 from infrastructure.config import Settings
 from infrastructure.logging import get_logger
@@ -25,10 +27,19 @@ class SimulatedMotorController:
         self._last_apply_s: float = 0.0
         self._last_log_s: float = 0.0
         self._emergency_override = False
+        self._history: deque[MotorCommandHistoryItem] = deque(
+            maxlen=int(settings.motor_command_history_max),
+        )
 
     @property
     def last_command(self) -> MotionCommand:
         return self._last_applied
+
+    @property
+    def command_history(self) -> list[MotorCommandHistoryItem]:
+        """Newest command first (tail of the ring buffer)."""
+
+        return list(reversed(self._history))
 
     def set_emergency_override(self, active: bool) -> None:
         """When True, all non-STOP commands are clamped to STOP."""
@@ -55,4 +66,13 @@ class SimulatedMotorController:
 
         self._last_applied = capped
         self._last_apply_s = t
+        tail = self._history[-1] if self._history else None
+        if tail is None or tail.command != capped.command or abs(tail.intensity - capped.intensity) > 1e-6:
+            self._history.append(
+                MotorCommandHistoryItem(
+                    command=capped.command,
+                    intensity=capped.intensity,
+                    applied_at_s=time.time(),
+                ),
+            )
         return capped

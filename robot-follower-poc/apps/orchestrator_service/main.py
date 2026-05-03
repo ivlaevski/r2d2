@@ -14,10 +14,12 @@ from apps.api_service.app import create_app
 from contracts.perception import PerceptionFrameResult, TargetObservation
 from infrastructure.config import Settings
 from infrastructure.logging import configure_logging, get_logger
+from infrastructure.perception_factory import create_person_tracker
 from infrastructure.robot_application import RobotApplication
 from perception.camera import CameraCapture
-from perception.person_detector import HOGPersonDetector, PlaceholderPersonDetector
+from perception.hog_person_tracker import PlaceholderPersonTracker
 from perception.pipeline import PerceptionPipeline
+from perception.target_selector import TargetSelector
 
 _LOG = get_logger(__name__)
 
@@ -71,24 +73,33 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(settings.log_level, service_name="orchestrator")
     robot = RobotApplication(settings)
 
+    if settings.elevenlabs_audio_enabled and settings.elevenlabs_auto_start:
+        try:
+            robot.audio_backend.start()
+            _LOG.info("ElevenLabs conversation auto-started (ELEVENLABS_AUTO_START=true).")
+        except Exception as exc:  # noqa: BLE001 — PoC: log and continue without voice
+            _LOG.error("ElevenLabs auto-start failed: %s", exc)
+
     if args.with_api:
         _start_api_background(robot, settings)
 
+    selector = TargetSelector(settings)
     if args.no_camera:
-        pipeline: PerceptionPipeline | None = None
-        camera: CameraCapture | None = None
+        pipeline = PerceptionPipeline(settings, PlaceholderPersonTracker(), selector)
+        camera = None
     else:
-        detector = HOGPersonDetector(settings)
-        pipeline = PerceptionPipeline(settings, detector)
         camera = CameraCapture(settings)
         try:
             camera.open()
         except Exception as exc:  # noqa: BLE001 — PoC: degrade to placeholder
             _LOG.warning("Camera unavailable (%s); using placeholder perception.", exc)
-            pipeline = PerceptionPipeline(settings, PlaceholderPersonDetector())
             if camera is not None:
                 camera.close()
             camera = None
+            pipeline = PerceptionPipeline(settings, PlaceholderPersonTracker(), selector)
+        else:
+            tracker = create_person_tracker(settings)
+            pipeline = PerceptionPipeline(settings, tracker, selector)
 
     _LOG.info("Orchestrator running. Ctrl+C to exit.")
     try:
@@ -105,7 +116,7 @@ def main(argv: list[str] | None = None) -> None:
                     dtype=np.uint8,
                 )
                 robot.ingest_perception(pipeline.process_frame(black))
-            else:
+            else:  # defensive: pipeline should always be constructed above
                 robot.ingest_perception(_empty_perception(settings))
 
             status = robot.tick()
@@ -119,6 +130,10 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         _LOG.info("Orchestrator stopped.")
     finally:
+        try:
+            robot.audio_backend.stop()
+        except Exception:
+            _LOG.debug("Audio backend stop failed or noop.", exc_info=True)
         if camera is not None:
             camera.close()
 

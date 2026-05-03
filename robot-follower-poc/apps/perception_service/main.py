@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 
 from infrastructure.config import Settings
 from infrastructure.logging import configure_logging, get_logger
+from infrastructure.perception_factory import create_person_tracker
 from perception.camera import CameraCapture
-from perception.person_detector import HOGPersonDetector
 from perception.pipeline import PerceptionPipeline
+from perception.target_selector import TargetSelector
 
 _LOG = get_logger(__name__)
 
@@ -19,8 +20,8 @@ def main() -> None:
     load_dotenv()
     settings = Settings()
     configure_logging(settings.log_level, service_name="perception")
-    detector = HOGPersonDetector(settings)
-    pipeline = PerceptionPipeline(settings, detector)
+    tracker = create_person_tracker(settings)
+    pipeline = PerceptionPipeline(settings, tracker, TargetSelector(settings))
     with CameraCapture(settings) as cam:
         t0 = time.monotonic()
         n = 0

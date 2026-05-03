@@ -6,10 +6,11 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from audio.audio_backend import AudioBackend
 from behavior.state_machine import RobotBehaviorStateMachine
 from contracts.commands import HighLevelCommand, HighLevelCommandType
-from contracts.perception import PerceptionFrameResult, TargetObservation
-from contracts.robot_state import RobotStatus
+from contracts.perception import BoundingBox, PerceptionFrameResult, TargetObservation, TrackedPerson
+from contracts.robot_state import DashboardTargetSnapshot, RobotStatus
 from infrastructure.config import Settings
 from motion.motion_planner import MotionPlanner
 from motion.simulated_motor_controller import SimulatedMotorController
@@ -17,6 +18,52 @@ from safety.safety_supervisor import SafetySupervisor
 
 if TYPE_CHECKING:
     from audio.command_recognizer import CommandRecognizerProtocol
+    from audio.robot_command_dispatcher import RobotCommandDispatcher
+    from audio.transcript_store import TranscriptStore
+
+
+def _bbox_iou(a: BoundingBox, b: BoundingBox) -> float:
+    ax2, ay2 = a.x + a.width, a.y + a.height
+    bx2, by2 = b.x + b.width, b.y + b.height
+    inter_x1 = max(a.x, b.x)
+    inter_y1 = max(a.y, b.y)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    iw = max(0, inter_x2 - inter_x1)
+    ih = max(0, inter_y2 - inter_y1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(1, a.width * a.height)
+    area_b = max(1, b.width * b.height)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _is_followed_target(primary: TargetObservation, person: TrackedPerson) -> bool:
+    if not primary.target_detected:
+        return False
+    if primary.track_id is not None and person.track_id is not None:
+        return int(primary.track_id) == int(person.track_id)
+    return _bbox_iou(primary.bbox, person.bbox) >= 0.2
+
+
+def _dashboard_targets(
+    perception: PerceptionFrameResult | None,
+    primary: TargetObservation,
+) -> list[DashboardTargetSnapshot]:
+    if perception is None or not perception.tracked_people:
+        return []
+    return [
+        DashboardTargetSnapshot(
+            track_id=p.track_id,
+            approximate_distance_m=p.approximate_distance_m,
+            confidence=p.confidence,
+            is_followed=_is_followed_target(primary, p),
+            face_thumbnail_jpeg_b64=p.face_thumbnail_jpeg_b64,
+        )
+        for p in perception.tracked_people
+    ]
 
 
 def _format_command_receipt_echo(cmd: HighLevelCommand) -> str:
@@ -50,9 +97,40 @@ class RobotApplication:
         self._command_receipt_echo: str | None = None
         self._command_receipt_at_s = 0.0
 
+        from audio.audio_backend_factory import build_audio_backend
+        from audio.robot_command_dispatcher import RobotCommandDispatcher
+        from audio.transcript_store import TranscriptStore
+
+        self._transcript_store = TranscriptStore(settings)
+        self._command_dispatcher = RobotCommandDispatcher(
+            settings=settings,
+            robot=self,
+            transcript_store=self._transcript_store,
+        )
+        self._audio_backend = build_audio_backend(settings, self)
+
     @property
     def settings(self) -> Settings:
         return self._settings
+
+    @property
+    def transcript_store(self) -> TranscriptStore:
+        return self._transcript_store
+
+    @property
+    def command_dispatcher(self) -> RobotCommandDispatcher:
+        return self._command_dispatcher
+
+    @property
+    def audio_backend(self) -> AudioBackend:
+        """Console or ElevenLabs audio backend."""
+
+        return self._audio_backend
+
+    @property
+    def desired_distance_m(self) -> float:
+        with self._lock:
+            return self._desired_distance_m
 
     def set_microphone_listening(self, listening: bool) -> None:
         """Mark console / mic ingress active; refresh heartbeat timestamp when true."""
@@ -114,6 +192,7 @@ class RobotApplication:
             )
             self._motor.apply(motion, now_s=t)
 
+            targets = _dashboard_targets(perception, target)
             status = RobotStatus(
                 mode=mode,
                 last_high_level_command=self._last_command.command if self._last_command else None,
@@ -126,6 +205,9 @@ class RobotApplication:
                 microphone_listening=self._microphone_listening_effective(t),
                 command_receipt_echo=self._command_receipt_echo,
                 command_receipt_at_s=self._command_receipt_at_s,
+                targets_count=len(targets),
+                targets=targets,
+                motor_command_history=self._motor.command_history,
             )
 
             if t - self._last_status_log_s >= self._settings.status_log_interval_s:
@@ -140,6 +222,7 @@ class RobotApplication:
             perception = self._last_perception
             target = perception.primary_target if perception else TargetObservation()
             now_m = time.monotonic()
+            targets = _dashboard_targets(perception, target)
             return RobotStatus(
                 mode=self._state_machine.mode,
                 last_high_level_command=self._last_command.command if self._last_command else None,
@@ -152,6 +235,9 @@ class RobotApplication:
                 microphone_listening=self._microphone_listening_effective(now_m),
                 command_receipt_echo=self._command_receipt_echo,
                 command_receipt_at_s=self._command_receipt_at_s,
+                targets_count=len(targets),
+                targets=targets,
+                motor_command_history=self._motor.command_history,
             )
 
     def emergency_stop_from_audio(self) -> None:

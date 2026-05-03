@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from contracts.commands import HighLevelCommandType
+from contracts.motor_history import MotorCommandHistoryItem
 from contracts.perception import TargetObservation
 from contracts.telemetry import MotionCommandType
 
@@ -20,6 +21,16 @@ class RobotMode(StrEnum):
     STOPPED = "STOPPED"
     TARGET_LOST = "TARGET_LOST"
     EMERGENCY_STOP = "EMERGENCY_STOP"
+
+
+class DashboardTargetSnapshot(BaseModel):
+    """One row in the dashboard targets strip."""
+
+    track_id: int | None = None
+    approximate_distance_m: float | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    is_followed: bool = False
+    face_thumbnail_jpeg_b64: str | None = None
 
 
 class RobotStatus(BaseModel):
@@ -38,3 +49,6 @@ class RobotStatus(BaseModel):
     # Human-readable echo so UIs can show “CONFIRMED: …” after each accepted command
     command_receipt_echo: str | None = None
     command_receipt_at_s: float = 0.0
+    targets_count: int = Field(default=0, ge=0)
+    targets: list[DashboardTargetSnapshot] = Field(default_factory=list)
+    motor_command_history: list[MotorCommandHistoryItem] = Field(default_factory=list)
